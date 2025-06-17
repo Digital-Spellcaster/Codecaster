@@ -70,4 +70,42 @@ p {
     bottom: 2rem;
   }
 }
+/* NeverManifest top-left link */
+.manifest-link {
+  position: absolute;
+  top: 20px;
+  left: 20px;
+  color: #bb66ff;
+  font-size: 1.1rem;
+  text-decoration: none;
+  font-weight: bold;
+  text-shadow: 0 0 5px #bb66ff, 0 0 10px #bb66ff;
+}
+
+.manifest-link:hover {
+  text-decoration: underline;
+  color: #d399ff;
+}
+
+/* Studio name bottom-right */
+.studio-name {
+  position: absolute;
+  bottom: 20px;
+  right: 20px;
+  font-size: 1.5rem;
+  font-weight: bold;
+  color: #00faff;
+  text-shadow: 0 0 5px #00faff, 0 0 10px #00faff;
+}
+
+/* Responsive font size for mobile */
+@media (max-width: 768px) {
+  .studio-name {
+    font-size: 1.2rem;
+  }
+
+  .manifest-link {
+    font-size: 1rem;
+  }
+}
 
