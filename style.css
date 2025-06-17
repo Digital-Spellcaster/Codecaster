@@ -21,3 +21,16 @@ p {
   font-size: 1.2rem;
   line-height: 1.5;
 }
+/* Background images for desktop and phone */
+body {
+  background-image: url('wallpaper.png');
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+@media (max-width: 768px) {
+  body {
+    background-image: url('phone.png');
+  }
+}
