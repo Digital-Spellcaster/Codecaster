@@ -1,0 +1,287 @@
+<!DOCTYPE html><html>
+<head>
+  <title>Isolator Layout Tool</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    body {
+      background: #111;
+      color: #0f0;
+      font-family: monospace;
+      margin: 0;
+      padding: 1em;
+      box-sizing: border-box;
+    }
+    input, select, button {
+      font-family: monospace;
+      font-size: 1rem;
+      padding: 0.5em;
+      margin: 0.4em 0.2em;
+      border: none;
+      border-radius: 4px;
+    }
+    input[type=number] {
+      width: 6ch;
+      font-size: 16px;
+    }
+    .row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      margin-bottom: 1em;
+      gap: 0.8em;
+    }
+    .label {
+      min-width: 10ch;
+      font-weight: bold;
+    }
+    .output {
+      white-space: pre-wrap;
+      background: #222;
+      padding: 1em;
+      border: 1px solid #0f0;
+      margin-top: 1em;
+      max-width: 100%;
+      overflow-x: auto;
+    }
+    svg {
+      background: #000;
+      border: 1px solid #0f0;
+      width: 100%;
+      height: auto;
+      margin-top: 1em;
+    }
+  </style>
+</head>
+<body>
+  <h1>Isolator Layout Tool</h1>  <div class="row">
+    <label class="label"># Isolators:</label>
+    <select id="isoCount" onchange="renderIsolators()">
+      <option value="4">4</option>
+      <option value="6" selected>6</option>
+      <option value="8">8</option>
+    </select>
+  </div>  <div class="row">
+    <label class="label">Total Weight:</label>
+    <input type="number" id="totalWeight" value="1200" title="Enter total weight in lbs">
+    <label class="label">CG X:</label>
+    <input type="number" id="cgx" value="50" title="Target center of gravity X">
+    <label class="label">CG Y:</label>
+    <input type="number" id="cgy" value="25" title="Target center of gravity Y">
+  </div>  <div class="row">
+    <strong>Isolator Locations (X, Y):</strong>
+    <div id="isoInputs"></div>
+  </div>  <div class="row">
+    <button onclick="calculate()">Calculate</button>
+    <button onclick="saveConfig()">Save</button>
+    <button onclick="loadConfig()">Load</button>
+    <button onclick="exportAsPNG()">Export PNG</button>
+    <button onclick="exportAsPDF()">Export PDF</button>
+    <input type="file" id="importFile" style="display:none" onchange="importConfig(event)">
+    <button onclick="document.getElementById('importFile').click()">Import JSON</button>
+    <label><input type="checkbox" id="snapToggle" checked> Snap to Grid</label>
+    <label class="label">Units:</label>
+    <select id="unitToggle" onchange="calculate()">
+      <option value="imperial" selected>Imperial (in)</option>
+      <option value="metric">Metric (cm)</option>
+      <option value="none">None</option>
+    </select>
+  </div>  <div class="output" id="output"></div>
+  <svg id="svgView" viewBox="0 0 100 66.67" preserveAspectRatio="xMidYMid meet"></svg>  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>  <script>
+    function renderIsolators(data = null) {
+      const count = parseInt(document.getElementById("isoCount").value);
+      let html = '';
+      for (let i = 0; i < count; i++) {
+        const x = data?.[i]?.x ?? 10 + i * 5;
+        const y = data?.[i]?.y ?? 10 + i * 3;
+        const snap = document.getElementById("snapToggle")?.checked;
+        const xVal = snap ? Math.round(x) : x;
+        const yVal = snap ? Math.round(y) : y;
+        html += `
+          <div>
+            <span class="label">Isolator ${i + 1}</span>
+            X: <input type="number" id="isoX${i}" value="${xVal}" title="Isolator ${i + 1} X">
+            Y: <input type="number" id="isoY${i}" value="${yVal}" title="Isolator ${i + 1} Y">
+          </div>`;
+      }
+      document.getElementById("isoInputs").innerHTML = html;
+      drawSVG();
+    }
+
+    function gatherConfig() {
+      const count = parseInt(document.getElementById("isoCount").value);
+      const isolators = [];
+      for (let i = 0; i < count; i++) {
+        isolators.push({
+          x: parseFloat(document.getElementById(`isoX${i}`).value),
+          y: parseFloat(document.getElementById(`isoY${i}`).value)
+        });
+      }
+      return {
+        isoCount: count,
+        totalWeight: parseFloat(document.getElementById("totalWeight").value),
+        cgx: parseFloat(document.getElementById("cgx").value),
+        cgy: parseFloat(document.getElementById("cgy").value),
+        isolators
+      };
+    }
+
+    function calculate() {
+      const config = gatherConfig();
+      const { isoCount, totalWeight, cgx, cgy, isolators } = config;
+      if (![4,6,8].includes(isoCount) || totalWeight <= 0 || isNaN(cgx) || isNaN(cgy)) {
+        alert("Please enter valid isolator count, weight, and CG values."); return;
+      }
+      for (let iso of isolators) if (isNaN(iso.x) || isNaN(iso.y)) {
+        alert("All isolator coordinates must be numbers."); return;
+      }
+      const wtPerIso = totalWeight / isoCount;
+      let momentX = 0, momentY = 0, output = '';
+      output += `Total Weight: ${totalWeight.toFixed(2)}\nTarget CG: (${cgx}, ${cgy})\n\n`;
+      isolators.forEach((iso, i) => {
+        momentX += iso.x * wtPerIso;
+        momentY += iso.y * wtPerIso;
+        output += `Isolator ${i + 1}: (${iso.x}, ${iso.y})\n`;
+      });
+      const calcCGX = momentX / totalWeight;
+      const calcCGY = momentY / totalWeight;
+      const dx = Math.abs(cgx - calcCGX), dy = Math.abs(cgy - calcCGY);
+      output += `\nCalculated CG: (${calcCGX.toFixed(2)}, ${calcCGY.toFixed(2)})\nError: ΔX=${dx.toFixed(2)}, ΔY=${dy.toFixed(2)}\n`;
+      output += (dx > 10 || dy > 10) ? `\n⚠️ CG out of tolerance.\n` : `\n✅ CG within tolerance.\n`;
+      document.getElementById("output").textContent = output;
+      drawSVG(calcCGX, calcCGY);
+    }
+
+    function drawSVG(cgx = null, cgy = null) {
+      const svg = document.getElementById("svgView");
+      const config = gatherConfig();
+      const { isolators, cgx: targetCGX, cgy: targetCGY } = config;
+      const unit = document.getElementById("unitToggle").value;
+      const width = 100, height = 66.67, unitStep = unit === "metric" ? 2.54 : 5;
+      let elements = [];
+      if (unit !== "none") {
+        for (let x = 0; x <= width; x += unitStep) {
+          elements.push(`<line x1="${x}" y1="0" x2="${x}" y2="${height}" stroke="#333" stroke-width="0.2"/>`);
+        }
+        for (let y = 0; y <= height; y += unitStep) {
+          elements.push(`<line x1="0" y1="${y}" x2="${width}" y2="${y}" stroke="#333" stroke-width="0.2"/>`);
+        }
+      }
+      elements = elements.concat(isolators.map((iso, i) => {
+        const cx = iso.x, cy = height - iso.y;
+        return `<circle cx="${cx}" cy="${cy}" r="1.2" fill="#0ff" data-id="${i}" class="isoDot"/>`;
+      }));
+      if (cgx !== null && cgy !== null) {
+        const cy = height - cgy;
+        elements.push(`<line x1="${cgx - 1}" y1="${cy - 1}" x2="${cgx + 1}" y2="${cy + 1}" stroke="#0f0" stroke-width="0.5"/>`);
+        elements.push(`<line x1="${cgx - 1}" y1="${cy + 1}" x2="${cgx + 1}" y2="${cy - 1}" stroke="#0f0" stroke-width="0.5"/>`);
+      }
+      const cyTarget = height - targetCGY;
+      elements.push(`<line x1="${targetCGX - 1}" y1="${cyTarget - 1}" x2="${targetCGX + 1}" y2="${cyTarget + 1}" stroke="#f00" stroke-width="0.5"/>`);
+      elements.push(`<line x1="${targetCGX - 1}" y1="${cyTarget + 1}" x2="${targetCGX + 1}" y2="${cyTarget - 1}" stroke="#f00" stroke-width="0.5"/>`);
+      svg.innerHTML = elements.join('\n');
+      setTimeout(() => {
+        svg.querySelectorAll(".isoDot").forEach(dot => {
+          dot.addEventListener("click", e => {
+            const id = parseInt(dot.getAttribute("data-id"));
+            const newX = prompt(`Enter new X for Isolator ${id + 1}:`, document.getElementById(`isoX${id}`).value);
+            const newY = prompt(`Enter new Y for Isolator ${id + 1}:`, document.getElementById(`isoY${id}`).value);
+            if (!isNaN(newX)) document.getElementById(`isoX${id}`).value = document.getElementById("snapToggle").checked ? Math.round(newX) : parseFloat(newX);
+            if (!isNaN(newY)) document.getElementById(`isoY${id}`).value = document.getElementById("snapToggle").checked ? Math.round(newY) : parseFloat(newY);
+            calculate();
+          });
+        });
+      }, 10);
+    }
+
+    function saveConfig() {
+      const config = gatherConfig();
+      localStorage.setItem("isolatorLayoutConfig", JSON.stringify(config));
+    }
+
+    function loadConfig() {
+      const raw = localStorage.getItem("isolatorLayoutConfig");
+      if (!raw) return;
+      const config = JSON.parse(raw);
+      document.getElementById("isoCount").value = config.isoCount;
+      document.getElementById("totalWeight").value = config.totalWeight;
+      document.getElementById("cgx").value = config.cgx;
+      document.getElementById("cgy").value = config.cgy;
+      renderIsolators(config.isolators);
+    }
+
+    function importConfig(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = e => {
+        const config = JSON.parse(e.target.result);
+        document.getElementById("isoCount").value = config.isoCount;
+        document.getElementById("totalWeight").value = config.totalWeight;
+        document.getElementById("cgx").value = config.cgx;
+        document.getElementById("cgy").value = config.cgy;
+        renderIsolators(config.isolators);
+      };
+      reader.readAsText(file);
+    }
+
+    function exportAsPNG() {
+      renderCanvasAndExport('png');
+    }
+
+    function exportAsPDF() {
+      renderCanvasAndExport('pdf');
+    }
+
+    function renderCanvasAndExport(mode = 'png') {
+      const svg = document.getElementById("svgView");
+      const width = svg.clientWidth || 600;
+      const height = svg.clientHeight || 400;
+      const svgData = new XMLSerializer().serializeToString(svg);
+      const svgBlob = new Blob([svgData], { type: "image/svg+xml;charset=utf-8" });
+      const url = URL.createObjectURL(svgBlob);
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        ctx.fillStyle = "#000";
+        ctx.fillRect(0, 0, width, height);
+        ctx.drawImage(img, 0, 0, width, height);
+
+        // Branding
+        ctx.save();
+        ctx.font = "14px monospace";
+        ctx.textAlign = "right";
+        ctx.fillStyle = "#00f";
+        ctx.shadowColor = "#0ff";
+        ctx.shadowBlur = 4;
+        ctx.fillText("Designed by The Digital Spellcaster", canvas.width - 10, canvas.height - 10);
+        ctx.restore();
+
+        const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+        if (mode === 'png') {
+          canvas.toBlob(blob => {
+            const a = document.createElement("a");
+            a.download = `isolator_layout_${timestamp}.png`;
+            a.href = URL.createObjectURL(blob);
+            a.click();
+          }, "image/png");
+        } else {
+          const pdf = new window.jspdf.jsPDF({
+            orientation: width > height ? 'landscape' : 'portrait',
+            unit: 'pt', format: [width, height]
+          });
+          const imgData = canvas.toDataURL("image/png");
+          pdf.addImage(imgData, 'PNG', 0, 0, width, height);
+          pdf.save(`isolator_layout_${timestamp}.pdf`);
+        }
+        URL.revokeObjectURL(url);
+      };
+      img.src = url;
+    }
+
+    // Init
+    renderIsolators();
+  </script></body>
+</html>
