@@ -1,6 +1,6 @@
 <!DOCTYPE html><html>
 <head>
-  <title>Isolator Layout Tool</title>
+  <title>Isolator Load Calculation Tool</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <style>
     body {
@@ -20,8 +20,12 @@
       border-radius: 4px;
     }
     input[type=number] {
-      width: 6ch;
+      width: 8ch;
       font-size: 16px;
+    }
+    input:disabled {
+        background: #444;
+        color: #aaa;
     }
     .row {
       display: flex;
@@ -53,25 +57,29 @@
   </style>
 </head>
 <body>
-  <h1>Isolator Layout Tool</h1>  <div class="row">
+  <h1>Isolator Load Calculation Tool</h1>
+  <div class="row">
     <label class="label"># Isolators:</label>
     <select id="isoCount" onchange="renderIsolators()">
       <option value="4">4</option>
       <option value="6" selected>6</option>
       <option value="8">8</option>
     </select>
-  </div>  <div class="row">
+  </div>
+  <div class="row">
     <label class="label">Total Weight:</label>
-    <input type="number" id="totalWeight" value="1200" title="Enter total weight in lbs">
+    <input type="number" id="totalWeight" value="1200" title="Enter total weight (e.g., lbs)">
     <label class="label">CG X:</label>
     <input type="number" id="cgx" value="50" title="Target center of gravity X">
     <label class="label">CG Y:</label>
     <input type="number" id="cgy" value="25" title="Target center of gravity Y">
-  </div>  <div class="row">
+  </div>
+  <div class="row">
     <strong>Isolator Locations (X, Y):</strong>
     <div id="isoInputs"></div>
-  </div>  <div class="row">
-    <button onclick="calculate()">Calculate</button>
+  </div>
+  <div class="row">
+    <button onclick="calculate()">Calculate Loads</button>
     <button onclick="saveConfig()">Save</button>
     <button onclick="loadConfig()">Load</button>
     <button onclick="exportAsPNG()">Export PNG</button>
@@ -80,27 +88,52 @@
     <button onclick="document.getElementById('importFile').click()">Import JSON</button>
     <label><input type="checkbox" id="snapToggle" checked> Snap to Grid</label>
     <label class="label">Units:</label>
-    <select id="unitToggle" onchange="calculate()">
+    <select id="unitToggle" onchange="drawSVG()">
       <option value="imperial" selected>Imperial (in)</option>
       <option value="metric">Metric (cm)</option>
       <option value="none">None</option>
     </select>
-  </div>  <div class="output" id="output"></div>
-  <svg id="svgView" viewBox="0 0 100 66.67" preserveAspectRatio="xMidYMid meet"></svg>  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>  <script>
+  </div>
+  <div class="output" id="output"></div>
+  <svg id="svgView" viewBox="0 0 100 66.67" preserveAspectRatio="xMidYMid meet"></svg>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script>
     function renderIsolators(data = null) {
       const count = parseInt(document.getElementById("isoCount").value);
       let html = '';
+      const snap = document.getElementById("snapToggle")?.checked;
+
       for (let i = 0; i < count; i++) {
-        const x = data?.[i]?.x ?? 10 + i * 5;
-        const y = data?.[i]?.y ?? 10 + i * 3;
-        const snap = document.getElementById("snapToggle")?.checked;
+        let x, y;
+        if (data) {
+          x = data[i]?.x;
+          y = data[i]?.y;
+        } else {
+            // Default clockwise positions
+            const defaults = [
+                {x: 0, y: 0},     // 1
+                {x: 0, y: 50},    // 2
+                {x: 50, y: 65},   // 3
+                {x: 100, y: 65},  // 4
+                {x: 100, y: 20},  // 5
+                {x: 60, y: 0},    // 6
+                {x: 30, y: 65},   // 7
+                {x: 70, y: 0}     // 8
+            ];
+            x = defaults[i]?.x ?? 10 + i * 5;
+            y = defaults[i]?.y ?? 10 + i * 3;
+        }
+        
         const xVal = snap ? Math.round(x) : x;
         const yVal = snap ? Math.round(y) : y;
+        const isDisabled = (i === 0);
+
         html += `
           <div>
             <span class="label">Isolator ${i + 1}</span>
-            X: <input type="number" id="isoX${i}" value="${xVal}" title="Isolator ${i + 1} X">
-            Y: <input type="number" id="isoY${i}" value="${yVal}" title="Isolator ${i + 1} Y">
+            X: <input type="number" id="isoX${i}" value="${isDisabled ? 0 : xVal}" title="Isolator ${i + 1} X" ${isDisabled ? 'disabled' : ''}>
+            Y: <input type="number" id="isoY${i}" value="${isDisabled ? 0 : yVal}" title="Isolator ${i + 1} Y" ${isDisabled ? 'disabled' : ''}>
           </div>`;
       }
       document.getElementById("isoInputs").innerHTML = html;
@@ -126,38 +159,126 @@
     }
 
     function calculate() {
-      const config = gatherConfig();
-      const { isoCount, totalWeight, cgx, cgy, isolators } = config;
-      if (![4,6,8].includes(isoCount) || totalWeight <= 0 || isNaN(cgx) || isNaN(cgy)) {
-        alert("Please enter valid isolator count, weight, and CG values."); return;
-      }
-      for (let iso of isolators) if (isNaN(iso.x) || isNaN(iso.y)) {
-        alert("All isolator coordinates must be numbers."); return;
-      }
-      const wtPerIso = totalWeight / isoCount;
-      let momentX = 0, momentY = 0, output = '';
-      output += `Total Weight: ${totalWeight.toFixed(2)}\nTarget CG: (${cgx}, ${cgy})\n\n`;
-      isolators.forEach((iso, i) => {
-        momentX += iso.x * wtPerIso;
-        momentY += iso.y * wtPerIso;
-        output += `Isolator ${i + 1}: (${iso.x}, ${iso.y})\n`;
-      });
-      const calcCGX = momentX / totalWeight;
-      const calcCGY = momentY / totalWeight;
-      const dx = Math.abs(cgx - calcCGX), dy = Math.abs(cgy - calcCGY);
-      output += `\nCalculated CG: (${calcCGX.toFixed(2)}, ${calcCGY.toFixed(2)})\nError: ΔX=${dx.toFixed(2)}, ΔY=${dy.toFixed(2)}\n`;
-      output += (dx > 10 || dy > 10) ? `\n⚠️ CG out of tolerance.\n` : `\n✅ CG within tolerance.\n`;
-      document.getElementById("output").textContent = output;
-      drawSVG(calcCGX, calcCGY);
+        const config = gatherConfig();
+        const { isoCount, totalWeight, cgx, cgy, isolators } = config;
+        let output = `Total Weight: ${totalWeight.toFixed(3)}\nTarget CG: (${cgx.toFixed(3)}, ${cgy.toFixed(3)})\n\n--- ISOLATOR LOADS ---\n`;
+        let hasNegativeLoad = false;
+
+        const xiso = i => isolators[i - 1].x;
+        const yiso = i => isolators[i - 1].y;
+        const loads = new Array(isoCount).fill(0);
+
+        // This section implements the logic from the user-provided BASIC source code.
+        try {
+            if (isoCount === 4) {
+                // Logic derived from BASIC code block for 4-point calculation (around line 1380).
+                // This assumes a rectangular layout defined by isolators 1 and 4.
+                const x_max = xiso(4);
+                const y_max = yiso(4);
+                if (x_max === 0 || y_max === 0) throw new Error("Isolator positions for this calculation cannot be on the origin.");
+
+                let prop_bottom = (y_max - cgy) / y_max;
+                let prop_top = cgy / y_max;
+                let prop_left = (x_max - cgx) / x_max;
+                let prop_right = cgx / x_max;
+
+                loads[0] = prop_left * prop_bottom * totalWeight;  // P(1)
+                loads[1] = prop_right * prop_bottom * totalWeight; // P(2)
+                loads[2] = prop_left * prop_top * totalWeight;     // P(3)
+                loads[3] = prop_right * prop_top * totalWeight;    // P(4)
+
+            } else if (isoCount === 6) {
+                // Logic translated from BASIC code block for 6 isolators (around lines 1140-1280).
+                // This logic is highly specific and contains empirical adjustments.
+                if (yiso(3) === 0 || xiso(6) === 0 || yiso(3) === yiso(2)) throw new Error("Isolator positions result in division by zero.");
+                
+                let temp_p = new Array(6).fill(0);
+                
+                let x1_b = cgy / yiso(3);
+                let x2_b = (yiso(3) - cgy) / yiso(3); // Based on simplified interpretation of lines 1140, 1150
+                
+                // Original logic from lines ~1180-1210 appears to calculate loads on 4 corners first.
+                temp_p[0] = (xiso(6) - cgx) / xiso(6) * x2_b * totalWeight; // P(1) Bottom-Left
+                temp_p[1] = (xiso(6) - cgx) / xiso(6) * x1_b * totalWeight; // P(2) Top-Left
+                temp_p[2] = (cgx / xiso(6)) * x2_b * totalWeight; // P(3) Bottom-Right
+                temp_p[3] = (cgx / xiso(6)) * x1_b * totalWeight; // P(4) Top-Right
+
+                // Adjustments from lines ~1220-1280. The mapping of P(n) to isolator numbers is based on common layouts.
+                loads[0] = 0.75 * temp_p[0]; // P(1) -> Iso 1
+                loads[1] = 0.75 * temp_p[1]; // P(2) -> Iso 2
+                loads[2] = temp_p[1] + 0.125 * temp_p[3]; // P(3) -> Iso 3
+                loads[3] = temp_p[3] + 0.125 * temp_p[1]; // P(4) -> Iso 4
+                loads[4] = temp_p[2] + 0.125 * temp_p[0]; // P(5) -> Iso 5
+                loads[5] = temp_p[0] + 0.125 * temp_p[2]; // P(6) -> Iso 6
+
+            } else if (isoCount === 8) {
+                // The logic for 8 isolators in the BASIC code fragments is unclear.
+                // This uses a standard bilinear interpolation based on the 4-corner logic seen in the BASIC code,
+                // distributing the load from the corners to each isolator.
+                const x_min = 0, y_min = 0;
+                let x_max = 0, y_max = 0;
+                isolators.forEach(iso => {
+                    if (iso.x > x_max) x_max = iso.x;
+                    if (iso.y > y_max) y_max = iso.y;
+                });
+                if (x_max === 0 || y_max === 0) throw new Error("Layout dimensions cannot be zero.");
+
+                isolators.forEach((iso, i) => {
+                    const x = iso.x;
+                    const y = iso.y;
+                    const x_dist = (x - x_min) / (x_max - x_min);
+                    const y_dist = (y - y_min) / (y_max - y_min);
+                    const cgx_dist = (cgx - x_min) / (x_max - x_min);
+                    const cgy_dist = (cgy - y_min) / (y_max - y_min);
+
+                    // Weight factors for each corner
+                    const f_bl = (1 - x_dist) * (1 - y_dist); // bottom-left
+                    const f_br = x_dist * (1 - y_dist);       // bottom-right
+                    const f_tl = (1 - x_dist) * y_dist;       // top-left
+                    const f_tr = x_dist * y_dist;             // top-right
+
+                    // Corner loads
+                    const p_bl = (1 - cgx_dist) * (1 - cgy_dist) * totalWeight;
+                    const p_br = cgx_dist * (1 - cgy_dist) * totalWeight;
+                    const p_tl = (1 - cgx_dist) * cgy_dist * totalWeight;
+                    const p_tr = cgx_dist * cgy_dist * totalWeight;
+
+                    loads[i] = f_bl * p_bl + f_br * p_br + f_tl * p_tl + f_tr * p_tr;
+                });
+            }
+        } catch(e) {
+            document.getElementById("output").textContent = `CALCULATION ERROR: ${e.message}\nPlease check isolator positions.`;
+            return;
+        }
+
+        let totalCalculatedLoad = 0;
+        loads.forEach((load, i) => {
+            totalCalculatedLoad += load;
+            output += `Isolator ${i + 1} (${xiso(i+1).toFixed(3)}, ${yiso(i+1).toFixed(3)}): ${load.toFixed(3)}`;
+            if (load < 0) {
+                output += `  ⚠️ TENSION`;
+                hasNegativeLoad = true;
+            }
+            output += `\n`;
+        });
+        
+        output += `\nTotal Calculated Load: ${totalCalculatedLoad.toFixed(3)}\n`;
+        if (hasNegativeLoad) {
+            output += `\n⚠️ WARNING: One or more isolators have a negative load (tension).\nThis configuration may be unstable. Adjust CG or isolator positions.`;
+        }
+
+        document.getElementById("output").textContent = output;
+        drawSVG();
     }
 
-    function drawSVG(cgx = null, cgy = null) {
+    function drawSVG() {
       const svg = document.getElementById("svgView");
       const config = gatherConfig();
       const { isolators, cgx: targetCGX, cgy: targetCGY } = config;
       const unit = document.getElementById("unitToggle").value;
       const width = 100, height = 66.67, unitStep = unit === "metric" ? 2.54 : 5;
       let elements = [];
+      
       if (unit !== "none") {
         for (let x = 0; x <= width; x += unitStep) {
           elements.push(`<line x1="${x}" y1="0" x2="${x}" y2="${height}" stroke="#333" stroke-width="0.2"/>`);
@@ -166,27 +287,32 @@
           elements.push(`<line x1="0" y1="${y}" x2="${width}" y2="${y}" stroke="#333" stroke-width="0.2"/>`);
         }
       }
+      
       elements = elements.concat(isolators.map((iso, i) => {
-        const cx = iso.x, cy = height - iso.y;
+        const cx = iso.x;
+        const cy = height - iso.y;
         return `<circle cx="${cx}" cy="${cy}" r="1.2" fill="#0ff" data-id="${i}" class="isoDot"/>`;
       }));
-      if (cgx !== null && cgy !== null) {
-        const cy = height - cgy;
-        elements.push(`<line x1="${cgx - 1}" y1="${cy - 1}" x2="${cgx + 1}" y2="${cy + 1}" stroke="#0f0" stroke-width="0.5"/>`);
-        elements.push(`<line x1="${cgx - 1}" y1="${cy + 1}" x2="${cgx + 1}" y2="${cy - 1}" stroke="#0f0" stroke-width="0.5"/>`);
-      }
+      
       const cyTarget = height - targetCGY;
-      elements.push(`<line x1="${targetCGX - 1}" y1="${cyTarget - 1}" x2="${targetCGX + 1}" y2="${cyTarget + 1}" stroke="#f00" stroke-width="0.5"/>`);
-      elements.push(`<line x1="${targetCGX - 1}" y1="${cyTarget + 1}" x2="${targetCGX + 1}" y2="${cyTarget - 1}" stroke="#f00" stroke-width="0.5"/>`);
+      elements.push(`<line x1="${targetCGX - 1.5}" y1="${cyTarget - 1.5}" x2="${targetCGX + 1.5}" y2="${cyTarget + 1.5}" stroke="#f00" stroke-width="0.5"/>`);
+      elements.push(`<line x1="${targetCGX - 1.5}" y1="${cyTarget + 1.5}" x2="${targetCGX + 1.5}" y2="${cyTarget - 1.5}" stroke="#f00" stroke-width="0.5"/>`);
+      
       svg.innerHTML = elements.join('\n');
+      
       setTimeout(() => {
         svg.querySelectorAll(".isoDot").forEach(dot => {
           dot.addEventListener("click", e => {
             const id = parseInt(dot.getAttribute("data-id"));
+            if (id === 0) return;
             const newX = prompt(`Enter new X for Isolator ${id + 1}:`, document.getElementById(`isoX${id}`).value);
             const newY = prompt(`Enter new Y for Isolator ${id + 1}:`, document.getElementById(`isoY${id}`).value);
-            if (!isNaN(newX)) document.getElementById(`isoX${id}`).value = document.getElementById("snapToggle").checked ? Math.round(newX) : parseFloat(newX);
-            if (!isNaN(newY)) document.getElementById(`isoY${id}`).value = document.getElementById("snapToggle").checked ? Math.round(newY) : parseFloat(newY);
+            if (newX !== null && !isNaN(newX)) {
+                document.getElementById(`isoX${id}`).value = document.getElementById("snapToggle").checked ? Math.round(parseFloat(newX)) : parseFloat(newX);
+            }
+            if (newY !== null && !isNaN(newY)) {
+                document.getElementById(`isoY${id}`).value = document.getElementById("snapToggle").checked ? Math.round(parseFloat(newY)) : parseFloat(newY);
+            }
             calculate();
           });
         });
@@ -207,6 +333,7 @@
       document.getElementById("cgx").value = config.cgx;
       document.getElementById("cgy").value = config.cgy;
       renderIsolators(config.isolators);
+      calculate();
     }
 
     function importConfig(event) {
@@ -220,6 +347,7 @@
         document.getElementById("cgx").value = config.cgx;
         document.getElementById("cgy").value = config.cgy;
         renderIsolators(config.isolators);
+        calculate();
       };
       reader.readAsText(file);
     }
@@ -234,12 +362,13 @@
 
     function renderCanvasAndExport(mode = 'png') {
       const svg = document.getElementById("svgView");
-      const width = svg.clientWidth || 600;
-      const height = svg.clientHeight || 400;
+      const width = svg.clientWidth || 800;
+      const height = svg.clientHeight || 600;
       const svgData = new XMLSerializer().serializeToString(svg);
       const svgBlob = new Blob([svgData], { type: "image/svg+xml;charset=utf-8" });
       const url = URL.createObjectURL(svgBlob);
       const img = new Image();
+      
       img.onload = () => {
         const canvas = document.createElement("canvas");
         canvas.width = width;
@@ -248,8 +377,7 @@
         ctx.fillStyle = "#000";
         ctx.fillRect(0, 0, width, height);
         ctx.drawImage(img, 0, 0, width, height);
-
-        // Branding
+        
         ctx.save();
         ctx.font = "14px monospace";
         ctx.textAlign = "right";
@@ -258,7 +386,7 @@
         ctx.shadowBlur = 4;
         ctx.fillText("Designed by The Digital Spellcaster", canvas.width - 10, canvas.height - 10);
         ctx.restore();
-
+        
         const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
         if (mode === 'png') {
           canvas.toBlob(blob => {
@@ -268,7 +396,8 @@
             a.click();
           }, "image/png");
         } else {
-          const pdf = new window.jspdf.jsPDF({
+          const { jsPDF } = window.jspdf;
+          const pdf = new jsPDF({
             orientation: width > height ? 'landscape' : 'portrait',
             unit: 'pt', format: [width, height]
           });
@@ -283,5 +412,8 @@
 
     // Init
     renderIsolators();
-  </script></body>
+    calculate();
+  </script>
+</body>
 </html>
+
